@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Document</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"></script>
+    <base href="/">
+    <link rel="stylesheet" href="/client/styles.css">
+    
+</head>
+<body>
+    <script>
+        let textFieldInFocus
+        //forms ease of use
+        function handleOnFocus(form_element)
+        {
+            textFieldInFocus = form_element;
+            console.log(form_element)
+        }
+        function handleOnBlur()
+        {
+            textFieldInFocus = null;
+        }
+
+    </script>
+    <div id="chat">
+        <div id="chat-text" style="width:200px;height:650px;overflow-y:scroll">
+            <div style="color:grey"> >>Move with 'WASD'</div>
+            <div style="color:grey"> >>Red squares = 1pt, Green squares = 5pts</div>
+            <div style="color:grey"> >>Set traps with spacebar | Yours is purple, others is red</div>
+            <div style="color:grey"> >>Try to get the highest streak!</div>
+            <div style="color:grey"> >>ChatRoom: Type away!</div>
+        </div>
+        <form id="chat-form">
+            <input id="chat-input" type="text" style="width:200px" onfocus="handleOnFocus(this)" onblur="handleOnBlur()"></input>
+        </form>
+        <form id="username-form">
+                Enter a username: 
+                <input id="username-input" type="text" style="width:100px" onfocus="handleOnFocus(this)" onblur="handleOnBlur()"></input>
+        </form>
+   </div>
+
+    <canvas width="1000" height="700" id="canvas"></canvas>
+
+    <script>
+
+            let chatText = document.getElementById("chat-text")
+            let chatForm = document.getElementById("chat-form")
+            let chatInput= document.getElementById("chat-input")
+            let usernameForm = document.getElementById("username-form")
+            let usernameInput= document.getElementById("username-input")
+
+
+            let username;
+            let can = document.getElementById("canvas")
+            let ctx = can.getContext("2d")
+            let width = can.width
+            let height = can.height
+            let socket = io();
+
+
+
+            let otherPlayerList = []
+            let latency = 0
+
+            //game vars and helpers
+            let traps = []
+            let normRects = []
+            let specRects = []
+            let streak = 0
+            let randColor = '#'+Math.floor(Math.random()*16777215).toString(16);
+            let randColor2 = '#'+Math.floor(Math.random()*16777215).toString(16);
+            function inRect (x, y, rx, ry, h) {
+                return rx <= x && x <= rx + h &&
+                    ry <= y && y <= ry + h;
+            }
+
+
+
+            class Player{
+                constructor(){
+                    this.x = 250
+                    this.y = 250
+                    this.id = 0
+                    this.num = Math.floor(Math.random() * 10)
+                    this.pressingRight = false
+                    this.pressingLeft = false
+                    this.pressingDown = false
+                    this.pressingUp = false
+                    this.maxspeed = 5
+                    this.trapSet = false
+                    this.trap = []
+                }
+
+                updatePosition(){
+                    if(this.pressingRight && !(this.x + 20 > width)){
+                        this.x += this.maxspeed
+                    }
+                    if(this.pressingLeft && !(this.x - 20 < 0)){
+                        this.x -= this.maxspeed
+                    }
+                    if(this.pressingUp && !(this.y + 20 > height)){
+                        this.y += this.maxspeed
+                    }
+                    if(this.pressingDown && !(this.y - 20 < 0)){
+                        this.y -= this.maxspeed
+                    }
+                }
+
+                draw(){
+                    ctx.fillStyle = "yellow"
+                    ctx.beginPath()
+                    ctx.arc(this.x, this.y, 20, 0, 2 * Math.PI, false)
+                    ctx.stroke()
+                    ctx.fill()
+                    ctx.fillStyle = "black"
+                    ctx.font = "30px Arial";
+                    ctx.fillText(this.num, this.x - 7, this.y + 10)
+                }
+
+                setTrap(){
+                    if(this.trapSet == false){
+                        this.trap = [currPlayer.x, currPlayer.y]
+                        this.trapSet = true
+                        socket.emit("trapSet", {
+                            trap: currPlayer.trap
+                        })
+                    }
+                }
+            }
+
+            function otherPlayersDraw(){
+                for(let i in otherPlayerList){
+                    ctx.fillStyle = "yellow"
+                    ctx.beginPath()
+                    ctx.arc(otherPlayerList[i].x , otherPlayerList[i].y, 20, 0, 2 * Math.PI, false)
+                    ctx.stroke()
+                    ctx.fill()
+                    ctx.fillStyle = "black"
+                    ctx.font = "30px Arial";
+                    ctx.fillText(otherPlayerList[i].num, otherPlayerList[i].x - 7, otherPlayerList[i].y + 10)
+                }
+            }
+
+            function showPlayerNum(){
+                ctx.fillStyle = "white"
+                ctx.font = "20px Arial";
+                ctx.fillText("Your num: " + currPlayer.num, width - (100 + streak.toString().length * 20), 20)
+            }
+
+            function showTrap(){
+                if(currPlayer.setTrap){
+                    ctx.fillStyle = "purple"
+                    ctx.beginPath()
+                    ctx.fillRect(currPlayer.trap[0], currPlayer.trap[1], 10, 10)
+                    ctx.closePath()
+                }
+            }
+
+            function shapeGame(normRects, specRects){
+                for(let i in normRects){
+                    ctx.fillStyle = "brown"
+                    ctx.strokeStyle = "yellow";
+                    ctx.lineWidth = 5
+                    ctx.beginPath()
+                    ctx.rect(normRects[i][0],normRects[i][1],normRects[i][2],normRects[i][2])
+                    ctx.stroke()
+                    ctx.closePath()
+                    ctx.fill()
+                }
+                for(let i in specRects){
+                    ctx.fillStyle = "green"
+                    ctx.strokeStyle = "yellow"
+                    ctx.lineWidth = 5
+                    ctx.beginPath()
+                    ctx.rect(specRects[i][0],specRects[i][1],specRects[i][2],specRects[i][2])
+                    ctx.stroke()
+                    ctx.closePath()
+                    ctx.fill()
+                }
+            }
+
+            
+            currPlayer = new Player()
+
+            socket.on("playerInitializationID", (data) => {
+                console.log(data.id)
+                currPlayer.id = data.id
+            })
+
+            socket.emit("playerInitialization", {
+                player: currPlayer
+            })
+
+            
+            let fps = 60
+
+            function showLatency(ping){
+                if(ping == 0){
+                    ping = "Not available"
+                }
+                ctx.fillStyle = "white"
+                ctx.font = "20px Arial";
+                ctx.fillText("Ping: " + ping, 20, height - 20)
+            }
+
+            function showStreak(streak){
+                ctx.fillStyle = "white"
+                ctx.font = "20px Arial";
+                ctx.fillText("Streak: " + streak, width - (100 + streak.toString().length * 20), height - 20)
+            }
+
+            function showOtherTraps(){
+                for(let i in traps){
+                    ctx.fillStyle = "red"
+                    ctx.beginPath()
+                    ctx.fillRect(traps[i][0], traps[i][1], 10, 10)
+                    ctx.closePath()
+                }
+            }
+
+
+            setInterval(function(){
+                ctx.clearRect(0,0,can.width,can.height)
+                ctx.fillStyle = "black"
+                ctx.fillRect(0,0,width,height)
+                if(normRects.length != 0 && specRects.length != 0){
+                    shapeGame(normRects, specRects)
+                }
+                currPlayer.updatePosition()
+
+
+
+                for(let i in traps){
+                   if( Math.sqrt((currPlayer.x-traps[i][0])*(currPlayer.x-traps[i][0]) + (currPlayer.y-traps[i][1])*(currPlayer.y-traps[i][1])) < 20 ){
+                        streak = 0
+                   }
+                }
+
+                currPlayer.draw()
+                otherPlayersDraw()
+                showTrap()
+                showOtherTraps()
+                showLatency(latency)
+                showStreak(streak)
+                showPlayerNum()
+
+
+                socket.emit("myPosition", {
+                    id: currPlayer.id,
+                    x: currPlayer.x,
+                    y: currPlayer.y
+                })
+            }, 1000/fps)
+
+            setInterval(() => {
+                if(time){
+                    latency = time
+                }
+            }, 1000/2)
+
+    
+            socket.on("allPlayerPos", (data) => {
+                time = Date.now() - data.startTime;
+                let list = data.pack
+                for(let i in list){
+                    if(currPlayer.id != list[i].id){
+                        if(otherPlayerList[list[i].id]){
+                            otherPlayerList[list[i].id].x = list[i].x,
+                            otherPlayerList[list[i].id].y = list[i].y
+                        }else{
+                            otherPlayerList[list[i].id] = list[i]
+                            otherPlayerList[list[i].id].x = list[i].x
+                            otherPlayerList[list[i].id].y = list[i].y
+                        }
+                    }
+                }
+            })
+
+            //game
+            socket.on("shapeOn", (data) => {
+               currPlayer.trapSet = false
+               currPlayer.trap = []
+               traps = []
+               let gotin = false
+               for(let i in normRects){
+                   if(inRect(currPlayer.x, currPlayer.y, normRects[i][0], normRects[i][1], normRects[i][2])){
+                       streak += 1
+                       gotin = true
+                   }
+               }
+               for(let i in specRects){
+                   if(inRect(currPlayer.x, currPlayer.y, specRects[i][0], specRects[i][1], specRects[i][2])){
+                       streak += 5
+                       gotin = true
+                   }
+               }
+               if(!gotin){
+                   streak = 0
+               }
+                
+                normRects = data.normrecs
+                specRects = data.specrecs
+            })
+
+            socket.on("trapPlaced", (data) => {
+                console.log("places")
+                if(currPlayer.trap.length != 0){
+                    if(data.trap[0] != currPlayer.trap[0] && data.trap[1] != currPlayer.trap[1]){
+                    traps.push(data.trap)
+                    }
+                }else{
+                    traps.push(data.trap)
+                }
+                
+            })
+
+            socket.on("playerDisconnect", (data) => {
+                delete otherPlayerList[data.id]
+            })
+
+            socket.on("addToChat", (data) => {
+                chatText.innerHTML += '<div>' + data + '<div>'
+                chatText.scrollTop = chatText.scrollHeight;
+            })
+
+            chatForm.onsubmit = function(e){
+                e.preventDefault()
+                socket.emit("sendMsg", {
+                    text: chatInput.value,
+                    user: username
+                })
+                chatInput.value = ""
+            }
+
+            usernameForm.onsubmit = function(e){
+                e.preventDefault()
+                username = usernameInput.value
+                usernameInput.value = ""
+            }
+
+            function keydown(evt){
+                if(!textFieldInFocus){
+                    if(evt.keyCode == 68){
+                        currPlayer.pressingRight = true
+                    }else if(evt.keyCode == 87){
+                        currPlayer.pressingDown = true
+                    }else if(evt.keyCode == 65){
+                        currPlayer.pressingLeft = true
+                    }else if(evt.keyCode == 83){
+                        currPlayer.pressingUp = true
+                    }else if(evt.keyCode == 32){
+                        currPlayer.setTrap()
+                    }
+                    
+                }
+            }
+            document.addEventListener("keydown", keydown);
+
+            function keyup(evt){
+                if(evt.keyCode == 68){
+                    currPlayer.pressingRight = false
+                }else if(evt.keyCode == 87){
+                    currPlayer.pressingDown = false
+                }else if(evt.keyCode == 65){
+                    currPlayer.pressingLeft = false
+                }else if(evt.keyCode == 83){
+                    currPlayer.pressingUp = false
+                }
+            }
+            document.addEventListener("keyup", keyup);
+        </script>
+
+        <h1>Stay in the shapes! (V1.0) by ya boi Hrish</h1>
+        
+</body>
+</html>
